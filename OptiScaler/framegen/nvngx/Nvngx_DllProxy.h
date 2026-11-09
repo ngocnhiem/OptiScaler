@@ -40,7 +40,8 @@ class Nvngx_DllProxy : public IFGNvngx
 
     virtual void LoadLibraries() = 0;
 
-    void LoadNgxExports();
+    // From dll, or from getProc when it's given
+    void LoadNgxExports(const std::function<void*(const char*)>& getProc = {});
 
     // Fills reportedMaxFakeFrames and antighostingVersion from PopulateParameters, D3D12's or else Vulkan's
     void QueryReportedParameters();

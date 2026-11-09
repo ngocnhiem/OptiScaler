@@ -62,24 +62,22 @@ bool Config::Reload(std::filesystem::path iniPath)
 
         // Upscalers
         {
-            // transform converts only when optional has a value
-            Dx11Upscaler.set_from_config(readString("Upscalers", "Dx11Upscaler", true).transform(CodeToUpscaler));
-            auto dx12Upscaler = readString("Upscalers", "Dx12Upscaler", true).transform(CodeToUpscalerFfx);
+            // Any value other than an upscaler is the name of a custom upscaler, the upscaler it runs as is set by
+            // CustomProviders::ResolveUpscaler once the Opti folder is known
+            auto readUpscaler = [&](const char* key, auto codeToUpscaler, auto& upscaler, auto& custom)
+            {
+                // transform converts only when optional has a value
+                auto value = readString("Upscalers", key, true).transform(codeToUpscaler);
 
-            // Any other value is the folder name of a custom upscaler, its kind is set by
-            // CustomProviders::ResolveDx12Upscaler once the Opti folder is known
-            if (dx12Upscaler == Upscaler::Reset)
-                CustomUpscaler.set_from_config(std::string(ini.GetValue("Upscalers", "Dx12Upscaler")));
-            else
-                Dx12Upscaler.set_from_config(dx12Upscaler);
+                if (value == Upscaler::Reset)
+                    custom.set_from_config(std::string(ini.GetValue("Upscalers", key)));
+                else
+                    upscaler.set_from_config(value);
+            };
 
-            // Same for Vulkan, checked by CustomProviders::ResolveVulkanUpscaler
-            auto vulkanUpscaler = readString("Upscalers", "VulkanUpscaler", true).transform(CodeToUpscalerFfx);
-
-            if (vulkanUpscaler == Upscaler::Reset)
-                CustomUpscalerVk.set_from_config(std::string(ini.GetValue("Upscalers", "VulkanUpscaler")));
-            else
-                VulkanUpscaler.set_from_config(vulkanUpscaler);
+            readUpscaler("Dx11Upscaler", CodeToUpscaler, Dx11Upscaler, CustomUpscalerDx11);
+            readUpscaler("Dx12Upscaler", CodeToUpscalerFfx, Dx12Upscaler, CustomUpscaler);
+            readUpscaler("VulkanUpscaler", CodeToUpscalerFfx, VulkanUpscaler, CustomUpscalerVk);
         }
 
         // Frame Generation
@@ -166,6 +164,7 @@ bool Config::Reload(std::filesystem::path iniPath)
             FGFPTAllowWaitForSingleObjectOnFence.set_from_config(readBool("FSRFG", "FPTWaitForSingleObjectOnFence"));
             FSRFGEnableWatermark.set_from_config(readBool("FSRFG", "EnableWatermark"));
             FSRFGDisableFlipMetering.set_from_config(readBool("FSRFG", "DisableFlipMetering"));
+            FSRFGProvider.set_from_config(readString("FSRFG", "Provider"));
         }
 
         // OptiFG
@@ -1326,27 +1325,29 @@ bool Config::SaveIni()
 
     // Upscalers
     {
-        auto SaveUpscaler = [&](const char* key, auto& upscalerSetting)
+        // A custom name is saved in place of the upscaler it runs as
+        auto SaveUpscaler = [&](const char* key, auto& upscalerSetting, auto& customSetting)
         {
-            std::string value = upscalerSetting.value_for_config()
+            auto upscaler = upscalerSetting.value_for_config();
+            auto custom = customSetting.value_or("");
+
+            if (!custom.empty() && (upscaler == Upscaler::FFX || upscaler == Upscaler::FFX_on12 ||
+                                    upscaler == Upscaler::DLSS || upscaler == Upscaler::DLSS_on12))
+            {
+                ini.SetValue("Upscalers", key, custom.c_str());
+                return;
+            }
+
+            std::string value = upscaler
                                     .transform(UpscalerToCode) // Turn enum into string
                                     .value_or("auto");
 
             ini.SetValue("Upscalers", key, value.c_str());
         };
 
-        SaveUpscaler("Dx11Upscaler", Instance()->Dx11Upscaler);
-        if (auto custom = Instance()->CustomUpscaler.value_or("");
-            !custom.empty() && (Instance()->Dx12Upscaler.value_for_config() == Upscaler::FFX ||
-                                Instance()->Dx12Upscaler.value_for_config() == Upscaler::DLSS))
-            ini.SetValue("Upscalers", "Dx12Upscaler", custom.c_str());
-        else
-            SaveUpscaler("Dx12Upscaler", Instance()->Dx12Upscaler);
-        if (auto custom = Instance()->CustomUpscalerVk.value_or("");
-            !custom.empty() && Instance()->VulkanUpscaler.value_for_config() == Upscaler::FFX)
-            ini.SetValue("Upscalers", "VulkanUpscaler", custom.c_str());
-        else
-            SaveUpscaler("VulkanUpscaler", Instance()->VulkanUpscaler);
+        SaveUpscaler("Dx11Upscaler", Instance()->Dx11Upscaler, Instance()->CustomUpscalerDx11);
+        SaveUpscaler("Dx12Upscaler", Instance()->Dx12Upscaler, Instance()->CustomUpscaler);
+        SaveUpscaler("VulkanUpscaler", Instance()->VulkanUpscaler, Instance()->CustomUpscalerVk);
     }
 
     // Frame Generation
@@ -1442,6 +1443,7 @@ bool Config::SaveIni()
                      GetBoolValue(Instance()->FSRFGEnableWatermark.value_for_config()).c_str());
         ini.SetValue("FSRFG", "DisableFlipMetering",
                      GetBoolValue(Instance()->FSRFGDisableFlipMetering.value_for_config()).c_str());
+        ini.SetValue("FSRFG", "Provider", Instance()->FSRFGProvider.value_for_config().value_or("auto").c_str());
     }
 
     // XeFG output

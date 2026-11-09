@@ -17,6 +17,7 @@
 #include "upscalers/xess/XeSSFeature_Dx11.h"
 #include "upscalers/xess/XeSSFeature_Dx11on12.h"
 #include <misc/IdentifyGpu.h>
+#include <misc/CustomProviders.h>
 #include <imgui/ImGuiNotify.hpp>
 
 bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NGX_Parameter* parameters,
@@ -25,6 +26,8 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
     State& state = State::Instance();
     Config& cfg = *Config::Instance();
     auto primaryGpu = IdentifyGpu::getPrimaryGpu();
+
+    const auto custom = CustomProviders::Selected(API::DX11, upscaler);
 
     switch (upscaler)
     {
@@ -53,7 +56,7 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
         break;
 
     case Upscaler::FFX_on12:
-        *feature = std::make_unique<FFXFeatureDx11on12>(handleId, parameters);
+        *feature = std::make_unique<FFXFeatureDx11on12>(handleId, parameters, custom);
         break;
 
     case Upscaler::DLSS:
@@ -70,9 +73,10 @@ bool FeatureProvider_Dx11::GetFeature(Upscaler upscaler, UINT handleId, NVSDK_NG
         }
 
     case Upscaler::DLSS_on12:
-        if (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value())
+        // A custom DLSS doesn't need a DLSS capable GPU
+        if (!custom.empty() || (primaryGpu.dlssCapable && state.NVNGX_DLSS_Path.has_value()))
         {
-            *feature = std::make_unique<DLSSFeatureDx11On12>(handleId, parameters);
+            *feature = std::make_unique<DLSSFeatureDx11On12>(handleId, parameters, custom);
             break;
         }
         else
@@ -129,7 +133,8 @@ bool FeatureProvider_Dx11::ChangeFeature(Upscaler upscaler, ID3D11Device* device
     Config& cfg = *Config::Instance();
 
     const bool dlssOnNonCapable = !IdentifyGpu::getPrimaryGpu().dlssCapable &&
-                                  (state.newBackend == Upscaler::DLSS || state.newBackend == Upscaler::DLSS_on12);
+                                  (state.newBackend == Upscaler::DLSS || state.newBackend == Upscaler::DLSS_on12) &&
+                                  CustomProviders::Selected(API::DX11, state.newBackend).empty();
     if (state.newBackend == Upscaler::Reset || dlssOnNonCapable)
         state.newBackend = cfg.Dx11Upscaler.value_or_default();
 

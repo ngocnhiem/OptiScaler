@@ -5,12 +5,13 @@
 
 void Nvngx_Custom::LoadLibraries()
 {
-    dll = CustomProviders::LoadDll(_name, CustomProviders::DlssgDllPath(_name));
+    auto exports = CustomProviders::Load(_name, CustomProviders::Kind::Dlssg);
 
-    if (dll == nullptr)
+    if (!exports)
         return;
 
-    LoadNgxExports();
+    dll = exports.dll;
+    LoadNgxExports(exports);
 
     // Max fake frames are reported like DLSSG does, which only reports them once inited
     QueryReportedParameters();
